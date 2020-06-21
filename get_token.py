@@ -8,7 +8,8 @@ async def my_games(session, server, email: str, password: str):
     ChannelId = 35
     ProjectId = 1177 if server in ['ru-alpha', 'ru-bravo', 'ru-charlie'] else 2000076
 
-    if server in ['ru-alpha', 'ru-bravo', 'ru-charlie']:
+    if email.split('@')[1] in ['mail.ru', 'inbox.ru']:
+
         ShardId = 0 if server == 'ru-alpha' else 1 if server == 'ru-bravo' else 2
 
         mailru_auth = await session.post('https://auth-ac.my.games/social/mailru')
@@ -41,8 +42,7 @@ async def my_games(session, server, email: str, password: str):
         }
         await session.post(f'https://o2.mail.ru/login?client_id=bbddb88d19b84a62aedd1ffbc71af201&response_type=code&scope=&redirect_uri=https%3A%2F%2Fauth-ac.my.games%2Fsocial%2Fmailru_callback%2F&state={mailru_state}&login={email}', data=data, headers=auth_headers)
         await session.post('https://auth-ac.my.games/sdc?from=https%3A%2F%2Fapi.my.games%2Fsocial%2Fprofile%2Fsession&JSONP_call=callback1522169', data=data, headers=auth_headers)
-
-    elif server in ['eu', 'na']:
+    else:
         ShardId = 1 if server == 'eu' else 2
 
         payload = {
@@ -66,8 +66,6 @@ async def my_games(session, server, email: str, password: str):
             except:
                 continue
             break
-    else:
-        return f"There is no support for '{server}'"
 
     token = session.cookie_jar.filter_cookies('https://api.my.games')
     mc = re.search(r'mc=([\d\w]+)', str(token['mc']), re.IGNORECASE).group(1)
