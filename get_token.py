@@ -1,6 +1,7 @@
 import re
 import asyncio
 import aiohttp
+import xml.etree.ElementTree as Et
 
 
 async def my_games(session, server, email: str, password: str):
@@ -8,12 +9,11 @@ async def my_games(session, server, email: str, password: str):
     ChannelId = 35
     ProjectId = 1177 if server in ['ru-alpha', 'ru-bravo', 'ru-charlie'] else 2000076
 
-    if email.split('@')[1] in ['mail.ru', 'inbox.ru']:
-
+    if email.split('@')[1] in ['mail.ru', 'inbox.ru', 'list.ru', 'bk.ru']:
         ShardId = 0 if server == 'ru-alpha' else 1 if server == 'ru-bravo' else 2
 
-        mailru_auth = await session.post('https://auth-ac.my.games/social/mailru')
-        mailru_state = re.search(r'state=([\d\w]+)', await mailru_auth.text(), re.IGNORECASE).group(1)
+        mailru_auth = await (await session.post('https://auth-ac.my.games/social/mailru')).text()
+        mailru_state = re.search(r'state=([\d\w]+)', mailru_auth, re.IGNORECASE).group(1)
 
         await session.post('https://account.mail.ru')
         act = session.cookie_jar.filter_cookies('https://account.mail.ru')
@@ -35,13 +35,27 @@ async def my_games(session, server, email: str, password: str):
         }
         await session.post('https://auth.mail.ru/cgi-bin/auth', headers=auth_headers, data=data)
 
+        o2csrf = session.cookie_jar.filter_cookies('https://o2.mail.ru/')
+        o2csrf_token = re.search(r'o2csrf=([\d\w]+)', str(o2csrf['o2csrf']), re.IGNORECASE).group(1)
+
         data = {
+            'Page': f'https://o2.mail.ru/login?client_id=bbddb88d19b84a62aedd1ffbc71af201&response_type=code&scope=&redirect_uri=https%3A%2F%2Fauth-ac.my.games%2Fsocial%2Fmailru_callback%2F&state=${mailru_state}&no_biz=1',
+            'FailPage': f'https://o2.mail.ru/login?client_id=bbddb88d19b84a62aedd1ffbc71af201&response_type=code&scope=&redirect_uri=https%3A%2F%2Fauth-ac.my.games%2Fsocial%2Fmailru_callback%2F&state=${mailru_state}&no_biz=1&fail=1',
+            'Referer': f'https://o2.mail.ru/xlogin?client_id=bbddb88d19b84a62aedd1ffbc71af201&response_type=code&scope=&redirect_uri=https%3A%2F%2Fauth-ac.my.games%2Fsocial%2Fmailru_callback%2F&state=${mailru_state}&no_biz=1&force_us=1&signup_target=_self&remind_target=_self&logo_target=_none',
+            'Origin': 'https://o2.mail.ru',
+            'login': email,
+            'o2csrf': o2csrf_token,
+            'mode': ''
+        }
+        await session.post(f'https://o2.mail.ru/login', data=data, headers=auth_headers)
+
+        sdc_data = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Referer': 'https://o2.mail.ru/xlogin',
             'Origin': 'https://o2.mail.ru'
         }
-        await session.post(f'https://o2.mail.ru/login?client_id=bbddb88d19b84a62aedd1ffbc71af201&response_type=code&scope=&redirect_uri=https%3A%2F%2Fauth-ac.my.games%2Fsocial%2Fmailru_callback%2F&state={mailru_state}&login={email}', data=data, headers=auth_headers)
-        await session.post('https://auth-ac.my.games/sdc?from=https%3A%2F%2Fapi.my.games%2Fsocial%2Fprofile%2Fsession&JSONP_call=callback1522169', data=data, headers=auth_headers)
+        await session.post('https://auth-ac.my.games/sdc?from=https%3A%2F%2Fapi.my.games%2Fsocial%2Fprofile%2Fsession&JSONP_call=callback1522169', data=sdc_data, headers=auth_headers)
+
     else:
         ShardId = 1 if server == 'eu' else 2
 
@@ -68,28 +82,41 @@ async def my_games(session, server, email: str, password: str):
             break
 
     token = session.cookie_jar.filter_cookies('https://api.my.games')
+
     mc = re.search(r'mc=([\d\w]+)', str(token['mc']), re.IGNORECASE).group(1)
     sdcs = re.search(r'sdcs=([\d\w]+)', str(token['sdcs']), re.IGNORECASE).group(1)
 
     auth_data = f'<?xml version="1.0" encoding="UTF-8"?><Auth mc="{mc}" sdcs="{sdcs}" ChannelId="{ChannelId}" GcLang="en" UserId="" UserId2=""/>'
-    auth_post = await session.post('https://authdl.my.games/gem.php?hint=Auth', data=auth_data, headers=auth_headers)
+    auth_post = await (await session.post('https://authdl.my.games/gem.php?hint=Auth', data=auth_data, headers=auth_headers)).text()
 
-    auth_code_group = re.search(r'SessionKey="([\d\w]+)"', await auth_post.text(), re.IGNORECASE)
+    auth_code_group = re.search(r'SessionKey="([\d\w]+)"', auth_post, re.IGNORECASE)
+
+    if not auth_code_group:
+        if Et.fromstring(auth_post).get('ErrorCode') == 505:
+            psession = await (await session.post('https://api.my.games/social/profile/session', headers=auth_headers)).json()
+            psession_data = {
+                'csrfmiddlewaretoken_jwt': psession['token'],
+                'csrfmiddlewaretoken': ''
+            }
+            await session.post('https://api.my.games/account/terms_accept/', data=psession_data, headers=auth_headers)
+            return 'Authentication failed (EULA)'
+        return 'Authentication failed (Auth)'
 
     session_key = auth_code_group.group(1)
-
     login_data = f'<Login SessionKey="{session_key}" ProjectId="{ProjectId}" ShardId="{ShardId}"/>'
+
     response_login = await (await session.post('https://authdl.my.games/gem.php?hint=Login', data=login_data, headers=auth_headers)).text()
-
-    account_id = re.search(r'GameAccount="([\d\w]+)"', response_login, re.IGNORECASE).group(1)
-    token = re.search(r'Code="([\d\w]+)"', response_login, re.IGNORECASE).group(1)
-
-    return account_id, token
+    if Et.fromstring(response_login).get('ErrorCode'):
+        return 'Authentication failed (Session)'
+    else:
+        account_id = re.search(r'GameAccount="([\d\w]+)"', response_login, re.IGNORECASE).group(1)
+        token = re.search(r'Code="([\d\w]+)"', response_login, re.IGNORECASE).group(1)
+        return account_id, token
 
 
 async def main():
     session = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=False))
-    await my_games(session=session, server="", email="", password="")
+    print(await my_games(session=session, server="", email="", password=""))
 
     await session.close()
 
