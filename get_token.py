@@ -36,6 +36,10 @@ async def my_games(session, server, email: str, password: str):
         await session.post('https://auth.mail.ru/cgi-bin/auth', headers=auth_headers, data=data)
 
         o2csrf = session.cookie_jar.filter_cookies('https://o2.mail.ru/')
+
+        if not o2csrf.get('o2csrf'):
+            return 'Authentication failed (O2CSRF)'
+
         o2csrf_token = re.search(r'o2csrf=([\d\w]+)', str(o2csrf['o2csrf']), re.IGNORECASE).group(1)
 
         data = {
@@ -82,6 +86,11 @@ async def my_games(session, server, email: str, password: str):
             break
 
     token = session.cookie_jar.filter_cookies('https://api.my.games')
+
+    if not token.get('mc'):
+        return 'Authentication failed (MC)'
+    if not token.get('sdcs'):
+        return 'Authentication failed (SDCS)'
 
     mc = re.search(r'mc=([\d\w]+)', str(token['mc']), re.IGNORECASE).group(1)
     sdcs = re.search(r'sdcs=([\d\w]+)', str(token['sdcs']), re.IGNORECASE).group(1)
